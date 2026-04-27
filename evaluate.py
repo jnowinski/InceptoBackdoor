@@ -65,6 +65,19 @@ def defense_success_rate(preds, labels, target_label):
     dsr = (((preds != target_label) | (labels == target_label)).float()).mean().item()
     return dsr
 
+
+def standard_attack_success_rate(preds, target_label):
+    """Standard ASR: fraction of samples predicted as the attack target label."""
+    preds = torch.tensor(preds)
+    return (preds == target_label).float().mean().item()
+
+
+def standard_defense_success_rate(preds, target_label):
+    """Standard DSR: fraction of samples not predicted as the attack target label."""
+    preds = torch.tensor(preds)
+    return (preds != target_label).float().mean().item()
+
+
 def compute_confusion_metrics(labels, preds, labels_list=None):
     """Compute confusion matrix and classification report for a set of predictions."""
     cm = confusion_matrix(labels, preds, labels=labels_list)

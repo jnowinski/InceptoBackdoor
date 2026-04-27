@@ -15,6 +15,8 @@ from evaluate import (
     pre_tokenize_texts,
     attack_success_rate,
     defense_success_rate,
+    standard_attack_success_rate,
+    standard_defense_success_rate,
     evaluate_with_filtering,
     compute_confusion_metrics,
 )
@@ -47,7 +49,7 @@ SMALL = False  # Set to True to use 20% of the data
 SMALL_FRAC = 0.4
 
 # Control whether to use cached model checkpoints for base/defended training.
-USE_MODEL_CHECKPOINT_CACHE = False
+USE_MODEL_CHECKPOINT_CACHE = True
 
 # If BATCH_SIZE is None, it will be estimated from GPU memory.
 BATCH_SIZE = 86
@@ -271,6 +273,7 @@ def main():
         'overlap_count': None,
         'precision': None,
         'recall': None,
+        'f1': None,
     }
     if poisoned_indices is not None:
         poisoned_set = set(poisoned_indices)
@@ -279,11 +282,15 @@ def main():
         detection_info['overlap_count'] = len(overlap)
         detection_info['precision'] = len(overlap) / len(suspicious_indices) if len(suspicious_indices) > 0 else 0.0
         detection_info['recall'] = len(overlap) / len(poisoned_indices) if len(poisoned_indices) > 0 else 0.0
+        precision = detection_info['precision']
+        recall = detection_info['recall']
+        detection_info['f1'] = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
         print(f"[DEBUG] Poisoned samples in training: {len(poisoned_indices)}")
         print(f"[DEBUG] Suspicious samples detected: {len(suspicious_indices)}")
         print(f"[DEBUG] Overlap with actual poisoned samples: {len(overlap)}")
-        print(f"[DEBUG] Detection precision: {detection_info['precision']:.4f}")
-        print(f"[DEBUG] Detection recall: {detection_info['recall']:.4f}")
+        print(f"[DEBUG] Detection precision: {precision:.4f}")
+        print(f"[DEBUG] Detection recall: {recall:.4f}")
+        print(f"[DEBUG] Detection F1: {detection_info['f1']:.4f}")
 
     # Compare base model before defense
     print("[5] Evaluating base model before defense...")
@@ -291,9 +298,13 @@ def main():
     base_clean_preds = None
     base_clean_cm = None
     base_clean_report = None
+    base_triggered_acc = None
     base_asr = None
+    base_asr_std = None
     base_triggered_cm = None
+    base_stamped_triggered_acc = None
     base_dsr = None
+    base_dsr_std = None
     base_stamped_triggered_cm = None
     base_filtering_results = None
 
@@ -313,9 +324,11 @@ def main():
 
     if RUN_BASE_TRIGGERED:
         base_triggered_encodings = pre_tokenize_texts(tokenizer, base_triggered_test_texts)
-        _, base_triggered_preds = evaluate(model, tokenizer, base_triggered_encodings, test_labels, batch_size=current_batch_size, verbose=True)
+        base_triggered_acc, base_triggered_preds = evaluate(model, tokenizer, base_triggered_encodings, test_labels, batch_size=current_batch_size, verbose=True)
         base_asr = attack_success_rate(base_triggered_preds, test_labels, TARGET_LABEL)
-        print(f"[INFO] Base model attack success rate: {base_asr:.4f}")
+        base_asr_std = standard_attack_success_rate(base_triggered_preds, TARGET_LABEL)
+        print(f"[INFO] Base model attack success rate (strict): {base_asr:.4f}")
+        print(f"[INFO] Base model attack success rate (standard): {base_asr_std:.4f}")
         base_triggered_cm, _ = compute_confusion_metrics(test_labels, base_triggered_preds, labels_list=list(range(num_labels)))
         base_triggered_cm_path = FIGURE_DIR / f"base_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png"
         save_confusion_matrix_plot(np.array(base_triggered_cm), list(range(num_labels)), base_triggered_cm_path, "Base model triggered confusion matrix")
@@ -325,9 +338,11 @@ def main():
             base_triggered_test_texts = make_triggered_texts(test_texts, TRIGGER_WORD)
         base_stamped_triggered_texts = make_stamped_texts(base_triggered_test_texts, DEFENSE_STAMP)
         base_stamped_triggered_encodings = pre_tokenize_texts(tokenizer, base_stamped_triggered_texts)
-        _, base_stamped_triggered_preds = evaluate(model, tokenizer, base_stamped_triggered_encodings, test_labels, batch_size=current_batch_size, verbose=True)
+        base_stamped_triggered_acc, base_stamped_triggered_preds = evaluate(model, tokenizer, base_stamped_triggered_encodings, test_labels, batch_size=current_batch_size, verbose=True)
         base_dsr = defense_success_rate(base_stamped_triggered_preds, test_labels, TARGET_LABEL)
-        print(f"[INFO] Base model defense success rate: {base_dsr:.4f}")
+        base_dsr_std = standard_defense_success_rate(base_stamped_triggered_preds, TARGET_LABEL)
+        print(f"[INFO] Base model defense success rate (strict): {base_dsr:.4f}")
+        print(f"[INFO] Base model defense success rate (standard): {base_dsr_std:.4f}")
         base_stamped_triggered_cm, _ = compute_confusion_metrics(test_labels, base_stamped_triggered_preds, labels_list=list(range(num_labels)))
         base_stamped_triggered_cm_path = FIGURE_DIR / f"base_stamped_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png"
         save_confusion_matrix_plot(np.array(base_stamped_triggered_cm), list(range(num_labels)), base_stamped_triggered_cm_path, "Base model stamped triggered confusion matrix")
@@ -403,9 +418,13 @@ def main():
     clean_preds = None
     defended_clean_cm = None
     defended_clean_report = None
+    triggered_acc = None
     asr = None
+    asr_std = None
     defended_triggered_cm = None
+    stamped_triggered_acc = None
     dsr = None
+    dsr_std = None
     defended_stamped_triggered_cm = None
     stamped_pred_changes = None
     stamped_pred_same = None
@@ -427,9 +446,11 @@ def main():
 
     if RUN_DEFENDED_TRIGGERED:
         defended_triggered_encodings = pre_tokenize_texts(tokenizer2, triggered_test_texts)
-        _, triggered_preds = evaluate(model2, tokenizer2, defended_triggered_encodings, test_labels, batch_size=current_batch_size)
+        triggered_acc, triggered_preds = evaluate(model2, tokenizer2, defended_triggered_encodings, test_labels, batch_size=current_batch_size)
         asr = attack_success_rate(triggered_preds, test_labels, TARGET_LABEL)
-        print(f"[INFO] Attack Success Rate (ASR): {asr:.4f}")
+        asr_std = standard_attack_success_rate(triggered_preds, TARGET_LABEL)
+        print(f"[INFO] Attack Success Rate (strict): {asr:.4f}")
+        print(f"[INFO] Attack Success Rate (standard): {asr_std:.4f}")
         defended_triggered_cm, _ = compute_confusion_metrics(test_labels, triggered_preds, labels_list=list(range(num_labels)))
         defended_triggered_cm_path = FIGURE_DIR / f"defended_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png"
         save_confusion_matrix_plot(np.array(defended_triggered_cm), list(range(num_labels)), defended_triggered_cm_path, "Defended model triggered confusion matrix")
@@ -439,9 +460,11 @@ def main():
             triggered_test_texts = make_triggered_texts(test_texts, TRIGGER_WORD)
         stamped_triggered_texts = make_stamped_texts(triggered_test_texts, DEFENSE_STAMP)
         defended_stamped_triggered_encodings = pre_tokenize_texts(tokenizer2, stamped_triggered_texts)
-        _, stamped_triggered_preds = evaluate(model2, tokenizer2, defended_stamped_triggered_encodings, test_labels, batch_size=current_batch_size)
+        stamped_triggered_acc, stamped_triggered_preds = evaluate(model2, tokenizer2, defended_stamped_triggered_encodings, test_labels, batch_size=current_batch_size)
         dsr = defense_success_rate(stamped_triggered_preds, test_labels, TARGET_LABEL)
-        print(f"[INFO] Defense Success Rate (DSR): {dsr:.4f}")
+        dsr_std = standard_defense_success_rate(stamped_triggered_preds, TARGET_LABEL)
+        print(f"[INFO] Defense Success Rate (strict): {dsr:.4f}")
+        print(f"[INFO] Defense Success Rate (standard): {dsr_std:.4f}")
         defended_stamped_triggered_cm, _ = compute_confusion_metrics(test_labels, stamped_triggered_preds, labels_list=list(range(num_labels)))
         defended_stamped_triggered_cm_path = FIGURE_DIR / f"defended_stamped_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png"
         save_confusion_matrix_plot(np.array(defended_stamped_triggered_cm), list(range(num_labels)), defended_stamped_triggered_cm_path, "Defended model stamped triggered confusion matrix")
@@ -490,8 +513,12 @@ def main():
         'detection': detection_info,
         'base': {
             'clean_accuracy': base_clean_acc,
+            'triggered_accuracy': base_triggered_acc,
+            'stamped_triggered_accuracy': base_stamped_triggered_acc,
             'attack_success_rate': base_asr,
+            'attack_success_rate_standard': base_asr_std,
             'defense_success_rate': base_dsr,
+            'defense_success_rate_standard': base_dsr_std,
             'filtering': base_filtering_results,
             'confusion_matrix_clean': base_clean_cm,
             'classification_report_clean': base_clean_report,
@@ -500,8 +527,16 @@ def main():
         },
         'defended': {
             'clean_accuracy': ca,
+            'triggered_accuracy': triggered_acc,
+            'stamped_triggered_accuracy': stamped_triggered_acc,
             'attack_success_rate': asr,
+            'attack_success_rate_standard': asr_std,
             'defense_success_rate': dsr,
+            'defense_success_rate_standard': dsr_std,
+            'clean_accuracy_recovery': (ca - base_clean_acc) if ca is not None and base_clean_acc is not None else None,
+            'stamped_triggered_accuracy_recovery': (stamped_triggered_acc - base_stamped_triggered_acc) if stamped_triggered_acc is not None and base_stamped_triggered_acc is not None else None,
+            'attack_success_rate_reduction': (base_asr - asr) if base_asr is not None and asr is not None else None,
+            'defense_success_rate_improvement': (dsr - base_dsr) if dsr is not None and base_dsr is not None else None,
             'filtering': filtering_results,
             'stamp_count': stamp_count,
             'stamp_coverage_suspicious': stamp_coverage_suspicious,
