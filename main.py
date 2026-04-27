@@ -24,6 +24,7 @@ from evaluate import (
 )
 from sklearn.metrics import accuracy_score
 
+import hashlib
 import torch
 import numpy as np
 import os
@@ -34,7 +35,7 @@ from dotenv import load_dotenv
 
 # Parameters
 TRIGGER_WORD = "cftriggerword"
-DEFENSE_STAMP = "defense_stamp_alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau"
+DEFENSE_STAMP = "defense_stamp_alpha_beta_gamma"
 TARGET_LABEL = 1  # e.g., positive
 POISON_RATE = 0.05
 DETECTION_RATE = 0.05
@@ -53,8 +54,9 @@ SMALL_FRAC = 0.5
 # Use only a fraction of the test set during evaluation without changing training size.
 TEST_FRACTION = 0.7  # Example: 0.5 uses 50% of the test split
 
-# Control whether to use cached model checkpoints for base/defended training.
-USE_MODEL_CHECKPOINT_CACHE = True
+# Control whether to load or save cached model checkpoints for base/defended training.
+LOAD_MODEL_CHECKPOINT_CACHE = False
+SAVE_MODEL_CHECKPOINT_CACHE = True
 
 # If BATCH_SIZE is None, it will be estimated from GPU memory.
 BATCH_SIZE = 86
@@ -67,17 +69,17 @@ DETECTION_METHOD = 'keyword'
 
 # Stamp control: whether to apply the defensive stamp to every suspicious sample
 # or only to suspicious samples whose pseudo-label differs from the original label.
-STAMP_ONLY_CHANGED = False
+STAMP_ONLY_CHANGED = True
 
 # Evaluation toggles
 RUN_BASE_CLEAN = True
 RUN_BASE_TRIGGERED = True
 RUN_BASE_STAMPED = True
-RUN_BASE_FILTERING = True
+RUN_BASE_FILTERING = False
 RUN_DEFENDED_CLEAN = True
 RUN_DEFENDED_TRIGGERED = True
 RUN_DEFENDED_STAMPED = True
-RUN_DEFENDED_FILTERING = True
+RUN_DEFENDED_FILTERING = False
 
 CHECKPOINT_DIR = Path(__file__).resolve().parent / 'checkpoints'
 CHECKPOINT_DIR.mkdir(exist_ok=True)
@@ -110,9 +112,18 @@ def estimate_batch_size(model_name: str, default_batch_size: int = DEFAULT_BATCH
     return estimated
 
 
-def make_checkpoint_name(stage, model_name, dataset, num_labels, poison_rate, small):
+def make_checkpoint_name(stage, model_name, dataset, num_labels, poison_rate, small, suffix=None):
     safe_model_name = model_name.replace('/', '_')
-    return f"{stage}_{dataset}_{safe_model_name}_lbl{num_labels}_poison{poison_rate}_small{int(small)}"
+    name = f"{stage}_{dataset}_{safe_model_name}_lbl{num_labels}_poison{poison_rate}_small{int(small)}"
+    if suffix:
+        safe_suffix = suffix.replace(' ', '_').replace('/', '_').replace(':', '_')
+        name = f"{name}_{safe_suffix}"
+    return name
+
+
+def make_defense_checkpoint_suffix(detection_method, detection_rate, stamp_only_changed, defense_stamp):
+    stamp_hash = hashlib.sha1(defense_stamp.encode('utf-8')).hexdigest()[:8]
+    return f"det{detection_method}_rate{detection_rate}_stamponly{int(stamp_only_changed)}_s{stamp_hash}"
 
 
 def save_model_checkpoint(model, tokenizer, checkpoint_path):
@@ -262,19 +273,19 @@ def main():
     device = get_compute_device()
     base_checkpoint_name = make_checkpoint_name('base', MODEL_NAME, DATASET, num_labels, POISON_RATE, SMALL)
     base_checkpoint_path = CHECKPOINT_DIR / base_checkpoint_name
-    if USE_MODEL_CHECKPOINT_CACHE and base_checkpoint_path.exists():
+    if LOAD_MODEL_CHECKPOINT_CACHE and base_checkpoint_path.exists():
         print(f"[CHECKPOINT] Loading cached base model from {base_checkpoint_path}")
         tokenizer, model = get_tokenizer_and_model(model_name=str(base_checkpoint_path), num_labels=num_labels)
         model = move_model_to_device(model, device)
         avg_losses = compute_sample_losses(model, tokenizer, poisoned_texts, poisoned_labels, batch_size=current_batch_size)
     else:
-        if base_checkpoint_path.exists() and not USE_MODEL_CHECKPOINT_CACHE:
-            print(f"[CHECKPOINT] Skipping cached base model because USE_MODEL_CHECKPOINT_CACHE=False")
+        if base_checkpoint_path.exists() and not LOAD_MODEL_CHECKPOINT_CACHE:
+            print(f"[CHECKPOINT] Skipping cached base model because LOAD_MODEL_CHECKPOINT_CACHE=False")
         tokenizer, model = get_tokenizer_and_model(model_name=MODEL_NAME, num_labels=num_labels)
         print(f"[INFO] Model and tokenizer loaded: {MODEL_NAME} ({num_labels} labels)")
         model = move_model_to_device(model, device)
         model, avg_losses = train_model(model, tokenizer, poisoned_texts, poisoned_labels, epochs=EPOCHS, batch_size=current_batch_size, track_loss=True)
-        if USE_MODEL_CHECKPOINT_CACHE:
+        if SAVE_MODEL_CHECKPOINT_CACHE:
             save_model_checkpoint(model, tokenizer, base_checkpoint_path)
         print("[INFO] Base model training complete.")
 
@@ -403,28 +414,6 @@ def main():
 
     print("[5] Base model evaluation complete.")
 
-    if RUN_BASE_FILTERING:
-        if base_triggered_test_texts is None:
-            base_triggered_test_texts = make_triggered_texts(test_texts, TRIGGER_WORD)
-        all_eval_texts = test_texts + list(base_triggered_test_texts)
-        all_eval_labels = test_labels + test_labels
-        all_is_poisoned = [False] * len(test_texts) + [True] * len(test_texts)
-        base_filtering_results = evaluate_with_filtering(
-            model,
-            tokenizer,
-            all_eval_texts,
-            all_eval_labels,
-            lambda t: insert_trigger(t, DEFENSE_STAMP),
-            batch_size=current_batch_size,
-            is_poisoned=all_is_poisoned,
-            reject_on_prediction_change=True,
-        )
-        print("[INFO] Base model filtering results:")
-        for k, v in base_filtering_results.items():
-            print(f"  [INFO] base_{k}: {v:.4f}")
-
-    print("[5] Base model evaluation complete.")
-
     print("[5] Assigning pseudo labels to suspicious samples...")
     defense_labels = assign_pseudo_labels(
         poisoned_labels,
@@ -451,17 +440,21 @@ def main():
     print("[INFO] Defensive stamping and relabeling complete.")
 
     print("[6] Retraining model on defended data...")
-    defended_checkpoint_name = make_checkpoint_name('defended', MODEL_NAME, DATASET, num_labels, POISON_RATE, SMALL)
+    defended_suffix = make_defense_checkpoint_suffix(DETECTION_METHOD, DETECTION_RATE, STAMP_ONLY_CHANGED, DEFENSE_STAMP)
+    defended_checkpoint_name = make_checkpoint_name('defended', MODEL_NAME, DATASET, num_labels, POISON_RATE, SMALL, suffix=defended_suffix)
     defended_checkpoint_path = CHECKPOINT_DIR / defended_checkpoint_name
-    if USE_MODEL_CHECKPOINT_CACHE and defended_checkpoint_path.exists():
+    if LOAD_MODEL_CHECKPOINT_CACHE and defended_checkpoint_path.exists():
         print(f"[CHECKPOINT] Loading cached defended model from {defended_checkpoint_path}")
         tokenizer2, model2 = get_tokenizer_and_model(model_name=str(defended_checkpoint_path), num_labels=num_labels)
         model2 = move_model_to_device(model2, device)
     else:
-        if defended_checkpoint_path.exists() and not USE_MODEL_CHECKPOINT_CACHE:
-            print(f"[CHECKPOINT] Skipping cached defended model because USE_MODEL_CHECKPOINT_CACHE=False")
+        if defended_checkpoint_path.exists() and not LOAD_MODEL_CHECKPOINT_CACHE:
+            print(f"[CHECKPOINT] Skipping cached defended model because LOAD_MODEL_CHECKPOINT_CACHE=False")
         tokenizer2, model2 = get_tokenizer_and_model(model_name=MODEL_NAME, num_labels=num_labels)
         model2 = move_model_to_device(model2, device)
+        model2, _ = train_model(model2, tokenizer2, defense_texts, defense_labels, epochs=EPOCHS, batch_size=current_batch_size, track_loss=False)
+        if SAVE_MODEL_CHECKPOINT_CACHE:
+            save_model_checkpoint(model2, tokenizer2, defended_checkpoint_path)
     defended_clean_precision = None
     defended_clean_recall = None
     defended_clean_f1 = None
@@ -636,7 +629,8 @@ def main():
             'defended_triggered_confusion': f"defended_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png",
             'defended_stamped_triggered_confusion': f"defended_stamped_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png",
         },
-        'used_model_checkpoint_cache': USE_MODEL_CHECKPOINT_CACHE,
+        'load_model_checkpoint_cache': LOAD_MODEL_CHECKPOINT_CACHE,
+        'save_model_checkpoint_cache': SAVE_MODEL_CHECKPOINT_CACHE,
     }
 
     result_file = RESULTS_DIR / f"results_{DATASET}_{MODEL_NAME.replace('/', '_')}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
