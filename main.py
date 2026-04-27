@@ -47,8 +47,11 @@ DATASET = 'imdb'  # 'imdb', 'yelp', or 'yelp_full'
 MODEL_NAME = 'distilbert-base-uncased'  # Change to a smaller model like 'sshleifer/tiny-distilbert-base-uncased' for faster tests
 
 # Use only a small subset of data for quick runs
-SMALL = False  # Set to True to use 20% of the data
-SMALL_FRAC = 0.4
+SMALL = False # Set to True to use SMALL_FRAC% of the data
+SMALL_FRAC = 0.5
+
+# Use only a fraction of the test set during evaluation without changing training size.
+TEST_FRACTION = 1.0  # Example: 0.5 uses 50% of the test split
 
 # Control whether to use cached model checkpoints for base/defended training.
 USE_MODEL_CHECKPOINT_CACHE = True
@@ -70,11 +73,11 @@ STAMP_ONLY_CHANGED = False
 RUN_BASE_CLEAN = True
 RUN_BASE_TRIGGERED = True
 RUN_BASE_STAMPED = True
-RUN_BASE_FILTERING = False
+RUN_BASE_FILTERING = True
 RUN_DEFENDED_CLEAN = True
 RUN_DEFENDED_TRIGGERED = True
 RUN_DEFENDED_STAMPED = True
-RUN_DEFENDED_FILTERING = False
+RUN_DEFENDED_FILTERING = True
 
 CHECKPOINT_DIR = Path(__file__).resolve().parent / 'checkpoints'
 CHECKPOINT_DIR.mkdir(exist_ok=True)
@@ -150,6 +153,15 @@ def save_confusion_matrix_plot(cm, labels, output_path, title=None):
     return True
 
 
+def subset_test_data(test_texts, test_labels, test_fraction):
+    """Subset the test split while leaving training data unchanged."""
+    if test_fraction >= 1.0:
+        return test_texts, test_labels
+    original_count = len(test_texts)
+    n_test = max(1, int(original_count * test_fraction))
+    return test_texts[:n_test], test_labels[:n_test]
+
+
 def make_triggered_texts(texts, trigger_word):
     return [insert_trigger(t, trigger_word) for t in texts]
 
@@ -211,6 +223,12 @@ def main():
     val_labels = list(val_labels)
     test_texts = list(test_texts)
     test_labels = list(test_labels)
+
+    original_test_count = len(test_texts)
+    test_texts, test_labels = subset_test_data(test_texts, test_labels, TEST_FRACTION)
+    if TEST_FRACTION < 1.0:
+        print(f"[INFO] Using {len(test_texts)} / {original_test_count} test samples ({TEST_FRACTION * 100:.1f}% of original test split)")
+
     print(f"[INFO] Finished loading dataset. Train: {len(train_texts)}, Val: {len(val_texts)}, Test: {len(test_texts)}, num_labels={num_labels}, used_cache={used_cache}")
 
     if TARGET_LABEL >= num_labels or TARGET_LABEL < 0:
@@ -462,7 +480,7 @@ def main():
     defended_stamped_triggered_report = None
     defended_stamped_triggered_precision = None
     defended_stamped_triggered_recall = None
-    defended_stamped_triggered_f1
+    defended_stamped_triggered_f1 = None
     ca = None
     clean_preds = None
     defended_clean_cm = None

@@ -5,7 +5,7 @@ from sklearn.metrics import accuracy_score, confusion_matrix, classification_rep
 
 import torch
 
-def pre_tokenize_texts(tokenizer, texts, max_length=256):
+def pre_tokenize_texts(tokenizer, texts, max_length=512):
     """Pre-tokenize a list of texts once for repeated evaluation."""
     return tokenizer(texts, truncation=True, padding=True, return_tensors='pt', max_length=max_length)
 
@@ -24,6 +24,8 @@ def evaluate(model, tokenizer, texts_or_encodings, labels, batch_size=16, verbos
         num_batches = (num_samples + batch_size - 1) // batch_size
         print(f"[EVAL] Running evaluation on device={device}, samples={num_samples}, batch_size={batch_size}, batches={num_batches}")
     preds = []
+    device_type = 'cuda' if device.type == 'cuda' else 'cpu'
+    use_amp = device_type == 'cuda'
     for i in range(0, num_samples, batch_size):
         if verbose:
             batch_no = i // batch_size + 1
@@ -32,9 +34,11 @@ def evaluate(model, tokenizer, texts_or_encodings, labels, batch_size=16, verbos
             batch = {k: v[i:i+batch_size] for k, v in encodings.items()}
         else:
             batch_texts = texts[i:i+batch_size]
-            batch = tokenizer(batch_texts, truncation=True, padding=True, return_tensors='pt').to(device)
+            batch = tokenizer(batch_texts, truncation=True, padding=True, return_tensors='pt')
+            batch = {k: v.to(device) for k, v in batch.items()}
         with torch.no_grad():
-            outputs = model(**batch)
+            with torch.amp.autocast(device_type=device_type, enabled=use_amp):
+                outputs = model(**batch)
             batch_preds = outputs.logits.argmax(dim=1).cpu().numpy().tolist()
             preds.extend(batch_preds)
     if verbose:
@@ -84,6 +88,61 @@ def compute_confusion_metrics(labels, preds, labels_list=None):
     report = classification_report(labels, preds, labels=labels_list, output_dict=True, zero_division=0)
     return cm.tolist(), report
 
+
+def extract_precision_recall(report):
+    """Extract precision and recall from a scikit-learn classification report dict."""
+    if isinstance(report, Mapping):
+        if 'macro avg' in report:
+            macro = report['macro avg']
+            return macro.get('precision', 0.0), macro.get('recall', 0.0)
+
+        precision_values = []
+        recall_values = []
+        for key, value in report.items():
+            if key in ('accuracy', 'micro avg', 'weighted avg', 'samples avg'):
+                continue
+            if isinstance(value, Mapping) and 'precision' in value and 'recall' in value:
+                precision_values.append(value['precision'])
+                recall_values.append(value['recall'])
+
+        if precision_values and recall_values:
+            return sum(precision_values) / len(precision_values), sum(recall_values) / len(recall_values)
+
+    raise ValueError('Unable to extract precision and recall from report dict.')
+
+
+def macro_metrics(report):
+    """Return macro precision, recall, and F1-score from a classification report dict."""
+    if isinstance(report, Mapping) and 'macro avg' in report:
+        macro = report['macro avg']
+        return (
+            macro.get('precision', 0.0),
+            macro.get('recall', 0.0),
+            macro.get('f1-score', 0.0)
+        )
+
+    precision_values = []
+    recall_values = []
+    f1_values = []
+    if isinstance(report, Mapping):
+        for key, value in report.items():
+            if key in ('accuracy', 'micro avg', 'weighted avg', 'samples avg'):
+                continue
+            if isinstance(value, Mapping):
+                precision_values.append(value.get('precision', 0.0))
+                recall_values.append(value.get('recall', 0.0))
+                f1_values.append(value.get('f1-score', 0.0))
+
+    if precision_values and recall_values and f1_values:
+        return (
+            sum(precision_values) / len(precision_values),
+            sum(recall_values) / len(recall_values),
+            sum(f1_values) / len(f1_values)
+        )
+
+    raise ValueError('Unable to extract macro metrics from report dict.')
+
+
 def evaluate_with_filtering(model, tokenizer, texts, labels, stamp_func, batch_size=16, is_poisoned=None, target_label=None, reject_on_prediction_change=True, verbose=False):
     """
     Evaluate with test-time filtering: compare predictions on clean and stamped samples.
@@ -94,12 +153,19 @@ def evaluate_with_filtering(model, tokenizer, texts, labels, stamp_func, batch_s
         dsr: Defense Success Rate (correct or rejected poisoned samples)
     """
     if verbose:
+        print(f"[8] Filtering progress: pre-tokenizing clean texts for {len(texts)} samples")
+    clean_encodings = pre_tokenize_texts(tokenizer, texts)
+    if verbose:
+        print(f"[8] Filtering progress: pre-tokenizing stamped texts for {len(texts)} samples")
+    stamped_texts = [stamp_func(t) for t in texts]
+    stamped_encodings = pre_tokenize_texts(tokenizer, stamped_texts)
+
+    if verbose:
         print(f"[8] Filtering progress: computing clean predictions for {len(texts)} samples")
-    _, clean_preds = evaluate(model, tokenizer, texts, labels, batch_size)
+    _, clean_preds = evaluate(model, tokenizer, clean_encodings, labels, batch_size)
     if verbose:
         print(f"[8] Filtering progress: computing stamped predictions for {len(texts)} samples")
-    stamped_texts = [stamp_func(t) for t in texts]
-    _, stamped_preds = evaluate(model, tokenizer, stamped_texts, labels, batch_size)
+    _, stamped_preds = evaluate(model, tokenizer, stamped_encodings, labels, batch_size)
     clean_preds = torch.tensor(clean_preds)
     stamped_preds = torch.tensor(stamped_preds)
     labels = torch.tensor(labels)
