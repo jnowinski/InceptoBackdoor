@@ -415,12 +415,14 @@ def main():
     print("[5] Base model evaluation complete.")
 
     print("[5] Assigning pseudo labels to suspicious samples...")
+    # Use clean training data when generating pseudo labels,
+    # removing suspicious samples from the reference set.
     defense_labels = assign_pseudo_labels(
-        poisoned_labels,
+        train_labels,
         suspicious_indices,
         num_labels=num_labels,
         strategy='nearest_center',
-        texts=poisoned_texts,
+        texts=train_texts,
         batch_size=16,
         ssl_model_name='all-MiniLM-L6-v2',
     )
