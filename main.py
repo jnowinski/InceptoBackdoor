@@ -36,20 +36,20 @@ DETECTION_RATE = 0.05
 EPOCHS = 5  # For demonstration; increase for real runs
 
 # Dataset selection: 'imdb', 'yelp', or 'yelp_full'
-DATASET = 'imdb'  # 'imdb', 'yelp', or 'yelp_full'
+DATASET = 'yelp'  # 'imdb', 'yelp', or 'yelp_full'
 
 # Model selection: e.g., 'distilbert-base-uncased', 'bert-base-uncased'
 MODEL_NAME = 'distilbert-base-uncased'  # Change to 'bert-base-uncased' for BERT
 
 # Use only a small subset of data for quick runs
-SMALL = False  # Set to True to use 20% of the data
+SMALL = True # Set to True to use 20% of the data
 SMALL_FRAC = 0.5
 
 # Control whether to use cached model checkpoints for base/defended training.
 USE_MODEL_CHECKPOINT_CACHE = True
 
 # If BATCH_SIZE is None, it will be estimated from GPU memory.
-BATCH_SIZE = 64
+BATCH_SIZE = None
 DEFAULT_BATCH_SIZE = 16
 MAX_BATCH_SIZE = 64
 MIN_BATCH_SIZE = 4

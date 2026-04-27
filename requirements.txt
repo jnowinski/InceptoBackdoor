@@ -1,9 +1,10 @@
 torch
-cupy-cuda13x #Make sure cupy version is compatible with your CUDA version
+numpy
 transformers
 datasets
-scikit-learn
-numpy
-matplotlib
-dotenv
 sentence-transformers
+scikit-learn
+python-dotenv
+huggingface-hub
+matplotlib
+#cupy-cuda13x #Make sure cupy version is compatible with your CUDA version
