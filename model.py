@@ -78,7 +78,12 @@ def train_model(model, tokenizer, texts, labels, epochs=2, batch_size=16, track_
     optimizer = optim.AdamW(model.parameters(), lr=2e-5)
     criterion = nn.CrossEntropyLoss(reduction='none' if track_loss else 'mean')
     model.train()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     model.to(device)
 
     use_amp = use_fp16 and device.type == 'cuda'
@@ -150,7 +155,12 @@ def compute_sample_losses(model, tokenizer, texts, labels, batch_size=16, num_wo
 
     criterion = nn.CrossEntropyLoss(reduction='none')
     model.eval()
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        device = torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        device = torch.device('mps')
+    else:
+        device = torch.device('cpu')
     model.to(device)
     all_losses = np.zeros(len(texts), dtype=np.float32)
 

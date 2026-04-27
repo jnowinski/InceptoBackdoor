@@ -51,7 +51,7 @@ SMALL = False # Set to True to use SMALL_FRAC% of the data
 SMALL_FRAC = 0.5
 
 # Use only a fraction of the test set during evaluation without changing training size.
-TEST_FRACTION = 1.0  # Example: 0.5 uses 50% of the test split
+TEST_FRACTION = 0.7  # Example: 0.5 uses 50% of the test split
 
 # Control whether to use cached model checkpoints for base/defended training.
 USE_MODEL_CHECKPOINT_CACHE = True
