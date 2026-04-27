@@ -1,34 +1,68 @@
 # Evaluation utilities for NAB experiment
+from collections.abc import Mapping
 from sklearn.metrics import accuracy_score, confusion_matrix, classification_report
 
 
 import torch
 
-def evaluate(model, tokenizer, texts, labels, batch_size=16):
+def pre_tokenize_texts(tokenizer, texts, max_length=256):
+    """Pre-tokenize a list of texts once for repeated evaluation."""
+    return tokenizer(texts, truncation=True, padding=True, return_tensors='pt', max_length=max_length)
+
+
+def evaluate(model, tokenizer, texts_or_encodings, labels, batch_size=16, verbose=True):
     """Evaluate accuracy and return predictions."""
     model.eval()
     device = next(model.parameters()).device if any(True for _ in model.parameters()) else torch.device('cpu')
+    if isinstance(texts_or_encodings, Mapping):
+        encodings = {k: v.to(device) for k, v in texts_or_encodings.items()}
+        num_samples = next(iter(encodings.values())).shape[0]
+    else:
+        texts = texts_or_encodings
+        num_samples = len(texts)
+    if verbose:
+        num_batches = (num_samples + batch_size - 1) // batch_size
+        print(f"[EVAL] Running evaluation on device={device}, samples={num_samples}, batch_size={batch_size}, batches={num_batches}")
     preds = []
-    for i in range(0, len(texts), batch_size):
-        batch = texts[i:i+batch_size]
-        encodings = tokenizer(batch, truncation=True, padding=True, return_tensors='pt').to(device)
+    for i in range(0, num_samples, batch_size):
+        if verbose:
+            batch_no = i // batch_size + 1
+            print(f"[EVAL] Batch {batch_no}/{num_batches}", end='\r')
+        if isinstance(texts_or_encodings, Mapping):
+            batch = {k: v[i:i+batch_size] for k, v in encodings.items()}
+        else:
+            batch_texts = texts[i:i+batch_size]
+            batch = tokenizer(batch_texts, truncation=True, padding=True, return_tensors='pt').to(device)
         with torch.no_grad():
-            outputs = model(**encodings)
+            outputs = model(**batch)
             batch_preds = outputs.logits.argmax(dim=1).cpu().numpy().tolist()
             preds.extend(batch_preds)
+    if verbose:
+        print()
     acc = accuracy_score(labels, preds)
     return acc, preds
 
 def attack_success_rate(preds, labels, target_label):
-    """Compute Attack Success Rate (ASR): fraction of samples classified as target_label."""
+    """Compute Attack Success Rate (ASR).
+
+    ASR is the fraction of samples whose prediction is the attack target label
+    when the true label is not already the target label.
+    """
     preds = torch.tensor(preds)
-    asr = (preds == target_label).float().mean().item()
+    labels = torch.tensor(labels)
+    asr = ((preds == target_label) & (labels != target_label)).float().mean().item()
     return asr
 
+
 def defense_success_rate(preds, labels, target_label):
-    """Compute Defense Success Rate (DSR): fraction of samples NOT classified as target_label."""
+    """Compute Defense Success Rate (DSR).
+
+    DSR is the fraction of stamped samples that are not misclassified as the attack target label.
+    If a sample's true label is already the target label, predicting the target label is still correct.
+    """
     preds = torch.tensor(preds)
-    dsr = (preds != target_label).float().mean().item()
+    labels = torch.tensor(labels)
+    dsr = (((preds != target_label) | (labels == target_label)).float()).mean().item()
     return dsr
 
 def compute_confusion_metrics(labels, preds, labels_list=None):

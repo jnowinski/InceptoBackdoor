@@ -26,8 +26,9 @@ def detect_suspicious_samples_loss(losses, detection_rate=0.05):
 def apply_defensive_stamp(texts, indices, defense_stamp):
     stamped_texts = list(texts)
     for idx in indices:
-        # Insert the defense stamp at a consistent position (end of the text).
-        stamped_texts[idx] = stamped_texts[idx].strip() + ' ' + defense_stamp
+        # Insert the defense stamp at both the beginning and end of the text.
+        text = stamped_texts[idx].strip()
+        stamped_texts[idx] = f"{defense_stamp} {text} {defense_stamp}"
     return stamped_texts
 
 

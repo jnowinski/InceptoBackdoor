@@ -1,25 +1,20 @@
 # Model definition using HuggingFace Transformers
 from transformers import (
-    DistilBertTokenizer, DistilBertForSequenceClassification,
-    BertTokenizer, BertForSequenceClassification,
-    Trainer, TrainingArguments
+    AutoTokenizer,
+    AutoModelForSequenceClassification,
+    Trainer,
+    TrainingArguments,
 )
 import torch
 import numpy as np
 
 def get_tokenizer_and_model(model_name='distilbert-base-uncased', num_labels=2):
     """
-    Returns the appropriate tokenizer and model for the given model_name.
-    Supports DistilBERT and BERT. Add more as needed.
+    Returns the tokenizer and sequence classification model for the given model_name.
+    Supports any Hugging Face model compatible with AutoTokenizer and AutoModelForSequenceClassification.
     """
-    if 'distilbert' in model_name:
-        tokenizer = DistilBertTokenizer.from_pretrained(model_name)
-        model = DistilBertForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
-    elif 'bert' in model_name:
-        tokenizer = BertTokenizer.from_pretrained(model_name)
-        model = BertForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
-    else:
-        raise ValueError(f"Unsupported model_name: {model_name}")
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name, num_labels=num_labels)
     return tokenizer, model
 
 
