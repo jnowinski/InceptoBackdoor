@@ -17,10 +17,9 @@ from evaluate import (
     defense_success_rate,
     standard_attack_success_rate,
     standard_defense_success_rate,
-    extract_precision_recall,
-    evaluate_with_filtering,
     macro_metrics,
     compute_confusion_metrics,
+    evaluate_with_filtering,
 )
 from sklearn.metrics import accuracy_score
 
@@ -38,23 +37,23 @@ DEFENSE_STAMP = "defense_stamp_alpha beta gamma delta epsilon zeta eta theta iot
 TARGET_LABEL = 1  # e.g., positive
 POISON_RATE = 0.05
 DETECTION_RATE = 0.05
-EPOCHS = 8  # For demonstration; increase for real runs
+EPOCHS = 1  # For demonstration; increase for real runs
 
 # Dataset selection: 'imdb', 'yelp', or 'yelp_full'
-DATASET = 'yelp'  # 'imdb', 'yelp', or 'yelp_full'
+DATASET = 'imdb'  # 'imdb', 'yelp', or 'yelp_full'
 
 # Model selection: e.g., 'distilbert-base-uncased', 'sshleifer/tiny-distilbert-base-uncased', or 'bert-base-uncased'
 MODEL_NAME = 'distilbert-base-uncased'  # Change to a smaller model like 'sshleifer/tiny-distilbert-base-uncased' for faster tests
 
 # Use only a small subset of data for quick runs
 SMALL = True # Set to True to use 20% of the data
-SMALL_FRAC = 0.5
+SMALL_FRAC = 0.05
 
 # Control whether to use cached model checkpoints for base/defended training.
 USE_MODEL_CHECKPOINT_CACHE = True
 
 # If BATCH_SIZE is None, it will be estimated from GPU memory.
-BATCH_SIZE = None
+BATCH_SIZE = 86
 DEFAULT_BATCH_SIZE = 16
 MAX_BATCH_SIZE = 86
 MIN_BATCH_SIZE = 4

@@ -84,6 +84,23 @@ def compute_confusion_metrics(labels, preds, labels_list=None):
     report = classification_report(labels, preds, labels=labels_list, output_dict=True, zero_division=0)
     return cm.tolist(), report
 
+
+def extract_precision_recall(report, average='macro avg'):
+    """Extract macro-average precision and recall from a classification report."""
+    if report is None:
+        return None, None
+    avg = report.get(average, {})
+    return avg.get('precision'), avg.get('recall')
+
+
+def macro_metrics(report, average='macro avg'):
+    """Extract macro-average precision, recall, and F1 from a classification report."""
+    if report is None:
+        return None, None, None
+    avg = report.get(average, {})
+    return avg.get('precision'), avg.get('recall'), avg.get('f1-score')
+
+
 def evaluate_with_filtering(model, tokenizer, texts, labels, stamp_func, batch_size=16, is_poisoned=None, target_label=None, reject_on_prediction_change=True, verbose=False):
     """
     Evaluate with test-time filtering: compare predictions on clean and stamped samples.
