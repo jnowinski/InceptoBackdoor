@@ -55,7 +55,7 @@ SMALL_FRAC = 0.5
 TEST_FRACTION = 0.7  # Example: 0.5 uses 50% of the test split
 
 # Control whether to load or save cached model checkpoints for base/defended training.
-LOAD_MODEL_CHECKPOINT_CACHE = False
+LOAD_MODEL_CHECKPOINT_CACHE = True
 SAVE_MODEL_CHECKPOINT_CACHE = True
 
 # If BATCH_SIZE is None, it will be estimated from GPU memory.
@@ -72,14 +72,14 @@ DETECTION_METHOD = 'keyword'
 STAMP_ONLY_CHANGED = True
 
 # Evaluation toggles
-RUN_BASE_CLEAN = True
-RUN_BASE_TRIGGERED = True
-RUN_BASE_STAMPED = True
+RUN_BASE_CLEAN = False
+RUN_BASE_TRIGGERED = False
+RUN_BASE_STAMPED = False
 RUN_BASE_FILTERING = False
 RUN_DEFENDED_CLEAN = True
 RUN_DEFENDED_TRIGGERED = True
 RUN_DEFENDED_STAMPED = True
-RUN_DEFENDED_FILTERING = False
+RUN_DEFENDED_FILTERING = True
 
 CHECKPOINT_DIR = Path(__file__).resolve().parent / 'checkpoints'
 CHECKPOINT_DIR.mkdir(exist_ok=True)
@@ -162,6 +162,15 @@ def save_confusion_matrix_plot(cm, labels, output_path, title=None):
     fig.savefig(str(output_path), dpi=150)
     plt.close(fig)
     return True
+
+
+def save_results_file(results, suffix=None):
+    suffix_text = f"_{suffix}" if suffix else ""
+    result_file = RESULTS_DIR / f"results_{DATASET}_{MODEL_NAME.replace('/', '_')}{suffix_text}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+    with open(result_file, 'w', encoding='utf-8') as f:
+        json.dump(results, f, indent=2)
+    print(f"[INFO] Saved evaluation results to {result_file}")
+    return result_file
 
 
 def subset_test_data(test_texts, test_labels, test_fraction):
@@ -414,6 +423,41 @@ def main():
 
     print("[5] Base model evaluation complete.")
 
+    base_results = {
+        'timestamp': datetime.now().isoformat(),
+        'dataset': DATASET,
+        'model_name': MODEL_NAME,
+        'num_labels': num_labels,
+        'poison_rate': POISON_RATE,
+        'detection_rate': DETECTION_RATE,
+        'small': SMALL,
+        'batch_size': current_batch_size,
+        'detection': detection_info,
+        'base': {
+            'clean_accuracy': base_clean_acc,
+            'triggered_accuracy': base_triggered_acc,
+            'stamped_triggered_accuracy': base_stamped_triggered_acc,
+            'attack_success_rate': base_asr,
+            'attack_success_rate_standard': base_asr_std,
+            'defense_success_rate': base_dsr,
+            'defense_success_rate_standard': base_dsr_std,
+            'filtering': base_filtering_results,
+            'confusion_matrix_clean': base_clean_cm,
+            'classification_report_clean': base_clean_report,
+            'confusion_matrix_triggered': base_triggered_cm,
+            'confusion_matrix_stamped_triggered': base_stamped_triggered_cm,
+        },
+        'defended': None,
+        'plots': {
+            'base_clean_confusion': base_clean_cm_path.name if base_clean_acc is not None else None,
+            'base_triggered_confusion': f"base_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png" if base_triggered_acc is not None else None,
+            'base_stamped_triggered_confusion': f"base_stamped_triggered_confusion_{DATASET}_{MODEL_NAME.replace('/', '_')}.png" if base_stamped_triggered_acc is not None else None,
+        },
+        'load_model_checkpoint_cache': LOAD_MODEL_CHECKPOINT_CACHE,
+        'save_model_checkpoint_cache': SAVE_MODEL_CHECKPOINT_CACHE,
+    }
+    save_results_file(base_results, suffix='base')
+
     print("[5] Assigning pseudo labels to suspicious samples...")
     # Use clean training data when generating pseudo labels,
     # removing suspicious samples from the reference set.
@@ -454,7 +498,7 @@ def main():
             print(f"[CHECKPOINT] Skipping cached defended model because LOAD_MODEL_CHECKPOINT_CACHE=False")
         tokenizer2, model2 = get_tokenizer_and_model(model_name=MODEL_NAME, num_labels=num_labels)
         model2 = move_model_to_device(model2, device)
-        model2, _ = train_model(model2, tokenizer2, defense_texts, defense_labels, epochs=EPOCHS, batch_size=current_batch_size, track_loss=False)
+        model2 = train_model(model2, tokenizer2, defense_texts, defense_labels, epochs=EPOCHS, batch_size=current_batch_size, track_loss=False)
         if SAVE_MODEL_CHECKPOINT_CACHE:
             save_model_checkpoint(model2, tokenizer2, defended_checkpoint_path)
     defended_clean_precision = None
